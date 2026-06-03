@@ -2,180 +2,260 @@
 
 ## 1. Objective
 
-Build an alert-only MT5 Expert Advisor that monitors configured symbols and timeframes for EMA 34/89 trend alert conditions and sends Telegram notifications.
+Upgrade the alert-only MT5 Expert Advisor into TNPA Signal Engine v0.4: a multi-symbol, multi-timeframe TNPA Radar Scanner that sends Telegram, popup, and print alerts for closed-candle TNPA signal state changes.
 
-The EA is intended for TNPA Trading OS as a notification tool only. It must support later extension with TNPA filters, but v0.1 should remain limited to alert generation.
+The EA remains notification-only. It must never place, modify, close, or manage trades.
 
 ## 2. Scope
 
-Version v0.2 covers:
+Version v0.4 covers:
 
-- Alert-only Expert Advisor for MetaTrader 5.
-- Symbols:
-  - `XAUUSD`
-  - `EURUSD`
-  - `BTCUSD`
-- Primary timeframe:
-  - `H1`
-- Optional future timeframes:
-  - `H4`
-  - `D1`
-- Signal foundation:
-  - EMA 34/89 crossover or trend-change alert.
-  - TNPA filter extension points prepared for later versions.
-- Alert delivery:
-  - Telegram message using user-provided bot token and chat ID.
-- Alert frequency:
-  - One alert per closed candle per symbol per timeframe.
-- Duplicate prevention:
-  - Track `lastSuccessfulAlertBarTime` per symbol and timeframe.
-  - Track pending failed alerts separately.
+- Multi-symbol scanner using the `Symbols` input.
+- Multi-timeframe scanner for `M15`, `M30`, `H1`, `H4`, `D1`, and `W1`.
+- Telegram startup connection test preserved from v0.2.
+- Timer-driven closed-candle scanning.
+- Telegram delivery, one retry for failed signal alerts, and duplicate prevention.
+- Signal types:
+  - `TNPA TREND ALIGNMENT`
+  - `TNPA WEEKLY FILTER`
+  - `TNPA KC21 MOMENTUM`
+  - `TNPA EMA21 PULLBACK`
+  - `TNPA TD PLACEHOLDER`
+- Donchian Channel context only. Donchian levels do not create signals.
 
 ## 3. Non-goals
 
 The EA must not:
 
-- Place market orders.
-- Place pending orders.
+- Call `OrderSend`.
+- Use `CTrade`.
+- Open positions.
 - Modify positions.
 - Close positions.
-- Manage stop loss or take profit.
-- Perform position sizing.
-- Connect to broker account management features.
-- Store, request, or handle broker credentials.
-- Optimize strategy parameters.
-- Claim profitability or trading performance.
-- Treat TNPA filters as implemented in v0.1.
+- Build or send trade requests.
+- Manage stops, targets, sizing, exposure, or broker orders.
+- Store broker credentials.
+- Treat Donchian Channel context as a signal.
+- Implement TD Sequential in v0.4.
 
 ## 4. Inputs
 
-User-configurable inputs:
+Core inputs:
 
+- `Symbols = "XAUUSD,EURUSD,BTCUSD"`
 - `TelegramBotToken`
-  - Telegram bot token provided by the user.
-  - Used only for sending Telegram alerts.
 - `TelegramChatID`
-  - Telegram chat ID provided by the user.
-  - Used only as the alert destination.
-- `Symbols`
-  - Default: `XAUUSD,EURUSD,BTCUSD`.
-- `PrimaryTimeframe`
-  - Default: `H1`.
-- `EnableH4`
-  - Default: disabled.
-  - Reserved for later timeframe expansion.
-- `EnableD1`
-  - Default: disabled.
-  - Reserved for later timeframe expansion.
-- `FastEMA`
-  - Default: `34`.
-- `SlowEMA`
-  - Default: `89`.
-- `EnableTNPAFilters`
-  - Default: disabled.
-  - Reserved for later extension.
-- `SendStartupTestMessage`
-  - Default: enabled.
-  - Sends one Telegram connection test message after successful EA initialization when Telegram alerts are enabled and Telegram credentials are configured.
+- `EnableTelegramAlert = true`
+- `EnablePopupAlert = true`
+- `EnablePrintLog = true`
+- `SendStartupTestMessage = true`
 
-Required runtime assumptions:
+Timeframe inputs:
 
-- Telegram web requests are configured by the user in MT5 terminal settings.
-- The Telegram API URL is allowed in MT5 WebRequest settings before live alert delivery is expected to work.
-- Symbols are available in the broker's Market Watch.
-- Each configured symbol has enough available history to calculate EMA 34 and EMA 89.
-- Alerts are evaluated on closed candles, not on the still-forming candle.
+- `Enable_M15 = true`
+- `Enable_M30 = true`
+- `Enable_H1 = true`
+- `Enable_H4 = true`
+- `Enable_D1 = true`
+- `Enable_W1 = true`
 
-## 5. Signal Logic v0.1
+Indicator inputs:
 
-Signal foundation v0.1:
+- `EMA_Fast = 21`
+- `EMA_Mid1 = 34`
+- `EMA_Mid2 = 89`
+- `EMA_Long = 200`
+- `RSI_Period = 14`
+- `RSI_SMA_Period = 50`
+- `KC_Period = 21`
+- `KC_ATR_Period = 21`
+- `KC_Multiplier = 1.5`
+- `DC_Fast_Period = 20`
+- `DC_Slow_Period = 55`
+- `EnableDCLevels = true`
+- `DC_Near_Percent = 0.15`
 
-- Calculate EMA 34 and EMA 89 for each configured symbol and timeframe.
-- Evaluate signals only after a candle has closed.
-- Use closed candles only.
-- Use close price as the EMA applied price unless a later approved specification changes this.
-- Use the most recently closed candle as the current signal candle.
-- Use the prior closed candle to confirm crossover or trend-change direction.
+Signal toggles:
 
-BUY alert condition:
+- `EnableSignal_TrendAlignment = true`
+- `EnableSignal_WeeklyFilter = true`
+- `EnableSignal_KC21Momentum = true`
+- `EnableSignal_EMA21Pullback = true`
+- `EnableSignal_TDPlaceholder = false`
 
-- EMA 34 crosses above EMA 89 on the most recently closed candle.
-- The prior closed candle must show EMA 34 at or below EMA 89.
-- The most recently closed candle must show EMA 34 above EMA 89.
-- No successful alert has already been sent for the same symbol, timeframe, and closed-candle time.
+## 5. Signal Logic v0.4
 
-SELL alert condition:
+All signals use closed candles only. The current forming candle must not be used.
 
-- EMA 34 crosses below EMA 89 on the most recently closed candle.
-- The prior closed candle must show EMA 34 at or above EMA 89.
-- The most recently closed candle must show EMA 34 below EMA 89.
-- No successful alert has already been sent for the same symbol, timeframe, and closed-candle time.
+### Signal Type 1: Trend Alignment
 
-Neutral condition:
+BUY:
 
-- If no EMA 34/89 crossover or trend-change occurs on the most recently closed candle, no alert is sent.
-- Do not send alerts on every candle during the same trend state.
-- If EMA 34 and EMA 89 are equal on the most recently closed candle, no alert is sent.
+- EMA21 > EMA34
+- EMA34 > EMA89
+- EMA89 > EMA200
+- RSI14 > RSI_SMA50
 
-Startup and restart behavior:
+SELL:
 
-- On EA startup, do not send historical alerts.
-- Initialize monitoring state from the latest available closed candle.
-- Start evaluating alerts from the next newly closed candle after initialization.
-- If the EA restarts, it should not backfill historical alerts from candles that closed before restart.
-- If `SendStartupTestMessage` is enabled, send one startup Telegram connection test message after successful initialization when Telegram is enabled and both Telegram inputs are configured.
-- Startup test messages must not affect signal evaluation, duplicate prevention, or pending failed alert state.
+- EMA21 < EMA34
+- EMA34 < EMA89
+- EMA89 < EMA200
+- RSI14 < RSI_SMA50
 
-TNPA filter extension points:
+Telegram label:
 
-- v0.2 should reserve structure for future TNPA filters.
-- Future filters may include session logic, market structure, volatility, confirmation rules, or higher-timeframe alignment.
-- In v0.1, TNPA filters must not block or modify alerts unless explicitly implemented in a later approved specification.
+- `TNPA TREND ALIGNMENT`
+
+### Signal Type 2: Weekly Filter
+
+Evaluate only on `W1`.
+
+BULLISH:
+
+- Weekly RSI14 > 50
+- Weekly close > Weekly EMA21
+
+BEARISH:
+
+- Weekly RSI14 < 50
+- Weekly close < Weekly EMA21
+
+Telegram label:
+
+- `TNPA WEEKLY FILTER`
+
+### Signal Type 3: KC21 Momentum
+
+Keltner Channel:
+
+- KC Mid = EMA21
+- KC Upper = EMA21 + ATR21 * KC_Multiplier
+- KC Lower = EMA21 - ATR21 * KC_Multiplier
+
+BUY:
+
+- Close > KC Mid
+- RSI14 > 50
+
+STRONG BUY:
+
+- Close > KC Upper
+- RSI14 > 50
+
+SELL:
+
+- Close < KC Mid
+- RSI14 < 50
+
+STRONG SELL:
+
+- Close < KC Lower
+- RSI14 < 50
+
+Telegram label:
+
+- `TNPA KC21 MOMENTUM`
+
+### Signal Type 4: EMA21 Pullback
+
+BUY:
+
+- Trend Alignment BUY is true.
+- Previous closed candle low touches or dips below EMA21.
+- Previous closed candle closes above EMA21.
+- RSI14 > 50.
+
+SELL:
+
+- Trend Alignment SELL is true.
+- Previous closed candle high touches or rises above EMA21.
+- Previous closed candle closes below EMA21.
+- RSI14 < 50.
+
+Telegram label:
+
+- `TNPA EMA21 PULLBACK`
+
+### Signal Type 5: TD Placeholder
+
+TD Sequential is not implemented in v0.4.
+
+If enabled:
+
+- Log: `TD Sequential signal is not implemented in v0.4`
+- Do not send TD alerts.
 
 ## 6. Telegram Alert Format
 
-Each Telegram alert should include:
-
-- EA name.
-- Symbol.
-- Timeframe.
-- Signal direction.
-- EMA values or EMA state.
-- Closed candle time.
-- Reminder that the EA is alert-only.
-
-Required message structure:
+Signal alert format:
 
 ```text
-TNPA Telegram Alert EA
-Symbol: <SYMBOL>
-Timeframe: <TIMEFRAME>
-Signal: <BULLISH_TREND | BEARISH_TREND>
-Basis: EMA 34/89 closed-candle crossover
-Closed candle time: <BAR_TIME>
-Mode: Alert only, no trade execution
+TNPA SIGNAL
+
+Type: <Signal Type>
+
+Strength:
+<Normal / Strong>
+
+Direction:
+BUY or SELL
+
+Symbol: <Symbol>
+
+Signal Timeframe: <Timeframe>
+
+Trading Style: <Auto Label>
+
+Price: <Closed Candle Close>
+
+EMA21: <Value>
+
+EMA34: <Value>
+
+EMA89: <Value>
+
+EMA200: <Value>
+
+RSI14: <Value>
+
+RSI_SMA50: <Value>
+
+KC21 Mid: <Value>
+
+KC21 Upper: <Value>
+
+KC21 Lower: <Value>
+
+DC20 Upper: <Value>
+
+DC20 Lower: <Value>
+
+DC55 Upper: <Value>
+
+DC55 Lower: <Value>
+
+DC Context: <Near DC20 Swing High etc>
+
+Broker: <Broker>
+
+Account: <Account Number>
+
+Mode:
+Demo or Live
 ```
-
-The message must not include:
-
-- Broker credentials.
-- Account number.
-- Account balance.
-- Position size.
-- Profit guarantees.
-- Direct financial advice.
 
 Startup connection test message:
 
 ```text
 TNPA Telegram Alert EA Connected
 
-Version: v0.2
+Version: v0.4
 Broker: <broker>
 Account: <account number>
 Mode: Demo or Live
 Symbols: <configured symbols>
-Timeframe: <configured timeframe>
+Timeframe: <configured timeframes>
 
 Connection Test: SUCCESS
 ```
@@ -187,153 +267,105 @@ Startup connection test rules:
 - Send only if `EnableTelegramAlert=true`.
 - Send only if `TelegramBotToken` is configured.
 - Send only if `TelegramChatID` is configured.
-- If send fails, log the exact Telegram/WebRequest failure reason, even when routine print logging is disabled.
-- Do not mark any signal alert as successfully delivered because of the startup test.
+- If send fails, log the exact Telegram/WebRequest failure reason.
+- Do not mark any signal alert as delivered because of the startup test.
 - Do not create or modify pending failed signal alert state because of the startup test.
 
 ## 7. Duplicate Alert Rules
 
-Duplicate prevention requirement:
+Send alerts only when a signal direction changes from:
 
-- The EA must send at most one successful alert per closed candle per symbol per timeframe.
-- The EA must store the last successfully alerted closed-candle time as `lastSuccessfulAlertBarTime`.
-- `lastSuccessfulAlertBarTime` must be tracked separately for each symbol and timeframe.
-- Pending failed alerts must be tracked separately from successful alerts.
-- Pending failed alert tracking must include symbol, timeframe, closed-candle time, signal direction, and retry status.
+- Neutral -> BUY
+- Neutral -> SELL
+- SELL -> BUY
+- BUY -> SELL
 
-Expected behavior:
+Do not repeat every candle while the signal remains in the same direction.
 
-- If the current closed candle time equals `lastSuccessfulAlertBarTime`, do not send another successful alert for that symbol and timeframe.
-- If a new closed candle appears and the crossover condition is true, attempt one Telegram alert.
-- Do not mark the alert as successfully sent until Telegram confirms success.
-- If Telegram confirms success, update `lastSuccessfulAlertBarTime`.
-- If Telegram send fails, log the failure and create or update a pending failed alert record.
-- Do not spam retries after failure.
-- Allow one retry on the next timer cycle only if the same closed candle is still the latest signal.
-- If the retry succeeds, update `lastSuccessfulAlertBarTime` and clear the pending failed alert.
-- If the retry fails, log the failure and clear or expire the pending retry so it does not repeat indefinitely.
-- If a newer candle appears before retry, do not retry the older failed alert.
-- If a new closed candle appears and no crossover condition is true, do not update `lastSuccessfulAlertBarTime`.
+Duplicate prevention key:
 
-Future consideration:
+- Symbol
+- Timeframe
+- Signal Type
+- Closed-candle bar time
 
-- If later versions add separate alert types, duplicate tracking may need to include signal type as well as symbol, timeframe, and bar time.
+If multiple signal types trigger on the same symbol/timeframe/bar:
+
+- Send separate alerts.
+- Prevent duplicates independently per signal type.
+
+Failed Telegram signal alerts:
+
+- Do not mark as successful until Telegram confirms success.
+- Create pending failed alert state per signal type.
+- Retry once on the next timer cycle only if the same closed candle is still latest.
+- Clear the pending retry after success, failure, or candle expiry.
 
 ## 8. Safety Rules
 
 The EA must:
 
 - Remain alert-only.
-- Never call order placement behavior.
-- Never call position modification behavior.
-- Never close positions.
-- Never read, store, or request broker credentials.
-- Use Telegram credentials only for alert delivery.
-- Avoid logging sensitive Telegram token values.
-- Fail safely if Telegram configuration is missing or invalid.
-- Fail safely if MT5 WebRequest permission for Telegram is missing.
-- Validate configured symbol availability before monitoring each symbol.
-- Validate that enough historical data exists for EMA calculation before evaluating signals.
-- Handle invalid indicator handles safely.
-- Handle missing or unavailable indicator buffer data safely.
-- Continue monitoring other configured symbols if one symbol is unavailable, where practical.
-- Report configuration or delivery failures clearly without attempting trading actions.
-- Keep TNPA filters disabled unless a later approved implementation explicitly defines them.
+- Use MQL5 indicator handles through `iMA`, `iRSI`, and `iATR`.
+- Use `CopyBuffer` safely.
+- Release indicator handles on deinitialization.
+- Validate symbol availability.
+- Validate enough history for EMA200, RSI SMA50, ATR/KC, and DC55.
+- Handle `INVALID_HANDLE` safely.
+- Handle `CopyBuffer` failure safely.
+- Handle missing history safely.
+- Keep scanning timer-driven.
+- Preserve Telegram startup test and delivery retry behavior.
+- Avoid logging Telegram token values.
+- Fail safely without trading actions.
 
-Human approval is required before:
-
-- Adding order placement.
-- Adding position management.
-- Adding broker integration.
-- Adding account-specific behavior.
-- Enabling TNPA filters that change alert behavior.
-- Expanding from alerts into automated trade execution.
+The EA must not add trading APIs or account management behavior.
 
 ## 9. Testing Checklist
 
 Configuration tests:
 
-- EA accepts Telegram bot token and chat ID as user inputs.
-- EA accepts `SendStartupTestMessage` as a user input.
-- EA handles missing Telegram token safely.
-- EA handles missing Telegram chat ID safely.
-- EA reports missing MT5 WebRequest permission for Telegram safely.
-- EA does not print full Telegram token in logs.
-- EA sends one startup test message after successful initialization when Telegram is enabled and credentials are configured.
-- EA does not send startup test message when `SendStartupTestMessage=false`.
-- EA does not send startup test message when Telegram is disabled.
-- EA logs the exact reason when startup test message fails, even when routine print logging is disabled.
-- EA handles unavailable symbols gracefully.
-- EA validates enough history exists for EMA 34/89 calculation.
-- EA handles invalid indicator handles safely.
-- EA handles missing or unavailable indicator buffer data safely.
+- Startup Telegram connection test sends once per initialization.
+- Telegram startup test does not affect signal state.
+- Missing Telegram token or chat ID is handled safely.
+- Missing WebRequest permission logs a Telegram failure reason.
+- Disabled alert channels do not mark signal alerts as delivered.
+- Symbol suffixes/prefixes require exact user input.
 
 Signal tests:
 
-- EMA 34/89 values are evaluated on closed candles.
-- BUY alert is produced when EMA 34 crosses above EMA 89 on the most recently closed candle.
-- SELL alert is produced when EMA 34 crosses below EMA 89 on the most recently closed candle.
-- No alert is produced on every candle during the same trend state.
-- No alert is produced when no valid crossover condition exists.
-- No alert is produced when EMA 34 and EMA 89 are equal on the most recently closed candle.
-- No historical alert is sent on EA startup.
-- Monitoring begins from the next newly closed candle after initialization.
-- Primary timeframe `H1` is evaluated by default.
-- `H4` and `D1` are not active unless later enabled by approved implementation.
+- All enabled timeframes are scanned.
+- Disabled timeframes are not scanned.
+- Trend Alignment BUY/SELL signals match EMA and RSI rules.
+- Weekly Filter runs only on `W1`.
+- KC21 Momentum emits Normal and Strong strength labels correctly.
+- EMA21 Pullback requires Trend Alignment and candle touch/close conditions.
+- TD Placeholder logs only and sends no alerts.
+- Donchian context appears in messages but does not generate alerts.
 
-Duplicate prevention tests:
+Duplicate and retry tests:
 
-- Only one successful alert is sent for a closed candle per symbol per timeframe.
-- Repeated ticks on the same candle do not produce duplicate alerts.
-- New closed candle can produce a new alert when the signal condition is true.
-- `lastSuccessfulAlertBarTime` is tracked separately for `XAUUSD`, `EURUSD`, and `BTCUSD`.
-- Pending failed alerts are tracked separately from successful alerts.
-- Failed Telegram sends do not update `lastSuccessfulAlertBarTime`.
-- One retry is allowed on the next timer cycle only if the same closed candle remains the latest signal.
-- Failed alert retries do not repeat indefinitely.
+- No historical signal alert is sent on startup.
+- Alerts are sent only on direction changes.
+- Duplicate prevention is per symbol, timeframe, signal type, and bar time.
+- Multiple signal types can send separate alerts on the same bar.
+- Telegram failure creates one pending retry only.
+- Retry does not repeat indefinitely.
 
 Safety tests:
 
-- EA does not place orders.
-- EA does not modify positions.
-- EA does not close positions.
-- EA does not access broker credentials.
-- EA does not perform position sizing.
-- Telegram delivery failure does not trigger trading behavior.
-- Telegram delivery failure is logged without retry spam.
-
-Review tests:
-
-- Reviewer confirms the EA matches alert-only scope.
-- Reviewer confirms TNPA filters are reserved for later extension only.
-- Reviewer confirms implementation does not exceed v0.1 specification.
+- No order placement functions exist.
+- No position management functions exist.
+- No trade request structures exist.
+- EA remains alert-only during all error paths.
 
 ## 10. Implementation Approval Gate
 
-This specification is not approval to write MQ5 code.
+The v0.4 implementation is approved for code only within the alert-only boundary.
 
-Implementation may begin only after the human operator approves:
+Manual MT5 testing is required before operational use:
 
-- This specification.
-- Alert-only scope.
-- Symbols: `XAUUSD`, `EURUSD`, `BTCUSD`.
-- Primary timeframe: `H1`.
-- EMA settings: `34` and `89`.
-- Telegram input approach.
-- Startup connection test message behavior.
-- EMA 34/89 crossover-only signal trigger.
-- Startup behavior that does not send historical alerts.
-- Telegram failure and one-retry behavior.
-- Duplicate prevention using `lastSuccessfulAlertBarTime` and pending failed alert tracking.
-- MT5 WebRequest setup requirement.
-- Symbol and history validation requirements.
-- No order placement.
-- No position modification.
-- No broker credential handling.
-
-Before implementation starts, Commander must confirm:
-
-- The task is scoped to v0.2.
-- Coder is authorized to create MQ5 code.
-- Tester has the validation checklist.
-- Reviewer has the acceptance criteria.
+- Confirm Exness MT5 20.3 loads the deployed EX5.
+- Confirm `https://api.telegram.org` is allowed in WebRequest settings.
+- Confirm startup Telegram test message is received.
+- Confirm no trades are placed or modified.

@@ -6,270 +6,216 @@ Reviewed implementation:
 
 - `src/TNPA_Telegram_Alert_EA.mq5`
 
-Reference documents:
+Reference:
 
 - `specs/tnpa_telegram_alert_ea_spec.md`
-- `reviews/tnpa_telegram_alert_ea_design_review_v2.md`
 
 Review role:
 
 - Tester
 - Reviewer
 
-This review file was updated after the v0.2 startup test implementation and forced Telegram failure logging fix.
-
-Update status:
-
-- v0.2 startup Telegram connection test added.
-- `SendStartupTestMessage` input added.
-- Startup test uses account metadata for the required connection message only.
-- Startup test does not affect signal logic, duplicate prevention, or pending failed alert state.
-- Telegram send failures now use forced warning logs so exact failure reasons are printed even when routine print logging is disabled.
-
 ## Pass Items
 
-### 1. No Trading Functions Are Used
+### 1. Alert-Only Safety
 
 Status: **Pass**
 
-Static scan found no references to common trade/order APIs such as:
+Static scan found no references to trading or position-management APIs:
 
 - `CTrade`
 - `OrderSend`
 - `OrderModify`
 - `OrderClose`
+- `PositionOpen`
+- `PositionModify`
 - `PositionSelect`
 - `PositionGet`
+- `MqlTradeRequest`
+- `TradeRequest`
 - `Buy`
 - `Sell`
 - `HistoryDeal`
 
-The implementation is alert-only and does not place, modify, or close trades.
+The EA remains alert-only. `AccountInfoString` and `AccountInfoInteger` are used only for broker, account number, and account mode text in Telegram messages.
 
-Note:
-
-- `AccountInfoString` and `AccountInfoInteger` are used only to populate the v0.2 startup connection-test message with broker, account number, and account mode.
-- They are not order placement or position modification functions.
-
-### 2. Closed Candle EMA34/EMA89 Crossover Logic
+### 2. Startup Telegram Connection Test
 
 Status: **Pass**
 
-The implementation evaluates only closed candles:
+The v0.2 startup connection test is preserved and updated to version `v0.4`.
 
-- `iTime(symbol, SignalTimeframe, 1)` is used for the latest closed candle.
-- `CopyBuffer(..., 1, 2, ...)` is used to read the latest closed candle and the prior closed candle.
-- BUY condition is implemented as previous EMA34 <= EMA89 and current EMA34 > EMA89.
-- SELL condition is implemented as previous EMA34 >= EMA89 and current EMA34 < EMA89.
-- The code does not alert on every candle during the same trend state.
+Confirmed behavior:
 
-This matches the approved crossover-only v0.1 behavior.
+- `SendStartupTestMessage` input remains available.
+- Startup message sends only when Telegram is enabled and token/chat ID are configured.
+- Startup message is sent once per EA initialization.
+- Startup message does not call `DeliverAlert`.
+- Startup message does not update signal duplicate state.
+- Startup message does not create pending retry state.
+- Telegram failure reasons use forced warning logs.
 
-### 3. Startup Historical Alert Prevention
-
-Status: **Pass**
-
-Startup behavior matches the spec:
-
-- During initialization, each symbol records the latest closed candle as `initializedBarTime`.
-- `lastEvaluatedBarTime` is set to the same latest closed candle.
-- Evaluation only proceeds when a later closed candle appears.
-
-This prevents historical alerts on startup and restart.
-
-### 4. Duplicate Prevention
+### 3. Multi-Symbol, Multi-Timeframe Scanner
 
 Status: **Pass**
 
-The implementation tracks:
+The implementation creates scanner states per configured symbol and enabled timeframe:
 
-- `lastSuccessfulAlertBarTime` per symbol state.
-- Pending failed alert state per symbol.
-- Pending alert symbol context through the containing `SymbolState`.
-- Pending alert timeframe through the global configured `SignalTimeframe`.
-- Pending alert candle time, direction, message, and retry status.
+- `M15`
+- `M30`
+- `H1`
+- `H4`
+- `D1`
+- `W1`
 
-The EA only updates `lastSuccessfulAlertBarTime` after successful delivery.
+Scanning remains timer-driven through `OnTimer`. `OnTick` intentionally does not evaluate signals.
 
-### 5. Telegram Failure Retry Behavior
-
-Status: **Pass**
-
-Telegram failure behavior is safe:
-
-- Failed Telegram sends are logged.
-- Failed sends do not update `lastSuccessfulAlertBarTime`.
-- One pending retry is created.
-- Retry occurs only through `OnTimer`, not every tick.
-- Retry only proceeds if the failed candle remains the latest closed candle.
-- Failed retry is cleared and does not repeat indefinitely.
-
-This satisfies the no-spam retry requirement.
-
-### 6. WebRequest Usage
-
-Status: **Pass With Note**
-
-The implementation uses `WebRequest` for Telegram delivery and logs a clear setup reminder:
-
-- User must allow `https://api.telegram.org` in MT5 WebRequest settings.
-- HTTP 200 plus Telegram response containing `"ok":true` is treated as success.
-- `WebRequest` errors are logged with the MT5 error code.
-
-The implementation does not log the Telegram token separately. However, the full request URL includes the token internally as required by the Telegram API.
-
-### 7. Indicator Handles And Buffers
+### 4. Indicator Handles And Closed-Candle Data
 
 Status: **Pass**
 
-The implementation handles platform failures safely:
+The implementation uses MQL5 indicator handles:
 
-- Validates symbol selection.
-- Validates available bar count before initialization and evaluation.
-- Checks invalid EMA indicator handles.
-- Releases valid indicator handles on deinitialization.
-- Checks `CopyBuffer` return counts.
-- Logs `CopyBuffer` failures and does not alert when EMA data is unavailable.
+- `iMA`
+- `iRSI`
+- `iATR`
 
-### 8. Popup/Print Behavior When Telegram Is Disabled
+The implementation validates:
 
-Status: **Pass With Note**
+- Symbol availability.
+- EMA200 history.
+- RSI SMA50 history.
+- ATR/KC history.
+- DC55 history.
+- `INVALID_HANDLE`.
+- `CopyBuffer` failure.
+- Closed candle OHLC availability.
 
-When `EnableTelegramAlert` is false:
+Indicator handles are released in `OnDeinit`.
 
-- `SendTelegramMessage` returns success.
-- Popup alert can fire if `EnablePopupAlert` is true.
-- Print log can fire if `EnablePrintLog` is true.
-- Successful alert state is updated after local delivery behavior.
-
-This is acceptable for non-Telegram alert mode.
-
-### 9. Startup Telegram Connection Test
+### 5. TNPA Signal Engine v0.4 Logic
 
 Status: **Pass**
 
-The v0.2 implementation adds:
+Implemented signal types:
 
-- `input bool SendStartupTestMessage = true`.
-- One startup connection test after successful `OnInit`.
-- Telegram-only send when Telegram is enabled and both Telegram inputs are configured.
-- Skip logs when startup test is disabled, Telegram is disabled, token is missing, or chat ID is missing.
-- Failure log that points to the preceding exact Telegram/WebRequest failure reason.
-- Telegram/WebRequest failure reasons are forced warnings, so they remain visible even when `EnablePrintLog=false`.
+- `TNPA TREND ALIGNMENT`
+- `TNPA WEEKLY FILTER`
+- `TNPA KC21 MOMENTUM`
+- `TNPA EMA21 PULLBACK`
+- `TNPA TD PLACEHOLDER`
 
-The startup test:
+Weekly Filter is restricted to `W1`.
 
-- Does not call `DeliverAlert`.
-- Does not update `lastSuccessfulAlertBarTime`.
-- Does not create pending failed signal alert state.
-- Does not evaluate EMA signals.
-- Does not call trading/order functions.
+TD Placeholder logs `TD Sequential signal is not implemented in v0.4` and does not send alerts.
+
+Donchian Channel values are calculated from closed candles only and included as market context, not as a signal.
+
+### 6. Duplicate Prevention And Retry
+
+Status: **Pass**
+
+Duplicate prevention is tracked per scanner state and signal type:
+
+- Symbol
+- Timeframe
+- Signal type
+- Closed-candle bar time
+
+Alerts are sent only when signal direction changes:
+
+- Neutral -> BUY
+- Neutral -> SELL
+- SELL -> BUY
+- BUY -> SELL
+
+Pending failed alerts are tracked per signal type and retried once on the next timer cycle only if the same closed candle remains latest.
+
+### 7. Telegram Message Format
+
+Status: **Pass**
+
+Signal messages include:
+
+- Signal type.
+- Strength.
+- Direction.
+- Symbol.
+- Signal timeframe.
+- Trading style label.
+- Closed candle close.
+- EMA21/34/89/200.
+- RSI14 and RSI_SMA50.
+- KC21 values.
+- DC20/DC55 values.
+- DC context.
+- Broker/account/mode.
 
 ## Issues Found
 
-### Issue 1: All Alert Channels Can Be Disabled
+### Issue 1: Broker-Specific Symbol Variants Are Not Auto-Resolved
 
-Severity: **Medium**
+Severity: **Low**
 
-Status: **Fixed**
-
-The implementation now checks whether at least one alert channel is enabled before delivery can succeed.
-
-If `EnableTelegramAlert`, `EnablePopupAlert`, and `EnablePrintLog` are all false:
-
-- `DeliverAlert` returns failure.
-- The EA does not update `lastSuccessfulAlertBarTime`.
-- A forced warning is printed even though normal print logging is disabled.
-- `OnInit` warns that signals will not be marked as delivered until at least one channel is enabled.
+The scanner validates symbols but does not auto-detect suffixes or prefixes.
 
 Impact:
 
-- The previous silent missed-alert risk is resolved.
+- If Exness exposes symbols such as `XAUUSDm`, the user must enter that exact symbol in `Symbols`.
 
-### Issue 2: Compile Confidence Needs Real MetaEditor Verification
+### Issue 2: Initially Invalid Symbol/Timeframe States Are Not Re-Added
 
-Severity: **Medium**
+Severity: **Low**
 
-Status: **Fixed**
+If a symbol/timeframe lacks enough history during `OnInit`, it is omitted until the EA is reloaded.
 
-The updated v0.2 source was compiled with Exness MT5 20.3 MetaEditor:
+Impact:
+
+- The EA fails safely, but the user may need to load history and restart the EA.
+
+### Issue 3: TD Placeholder Can Log Repeatedly If Enabled
+
+Severity: **Low**
+
+When `EnableSignal_TDPlaceholder=true`, the EA logs that TD Sequential is not implemented each newly evaluated candle per scanner state.
+
+Impact:
+
+- No alert is sent and no trading behavior occurs, but logs may be noisy.
+
+## Required Fixes
+
+No code-blocking issues found after compilation.
+
+Manual MT5 terminal testing is still required before operational use:
+
+- Confirm startup Telegram test delivery.
+- Confirm WebRequest settings.
+- Confirm symbol names.
+- Confirm no orders are placed or modified.
+
+## Compile Verification
+
+Compiler:
 
 ```text
 C:\Program Files\MetaTrader 5 EXNESS 20.3\MetaEditor64.exe
 ```
 
-Final compile result:
-
-```text
-0 errors, 0 warnings
-```
-
 Latest verified compile line:
 
 ```text
-2026.06.03 18:24:06.017 Compile C:\Users\ADMIN\nhtai133-agent-harmes\src\TNPA_Telegram_Alert_EA.mq5 - 0 errors, 0 warnings, 491 ms elapsed, cpu='X64 Regular'
+2026.06.03 23:01:16.368 Compile C:\Users\ADMIN\nhtai133-agent-harmes\src\TNPA_Telegram_Alert_EA.mq5 - 0 errors, 0 warnings, 691 ms elapsed, cpu='X64 Regular'
 ```
 
-Areas confirmed by actual compilation:
+Result:
 
-- `CharToString(c)` with `uchar` input.
-- `StringToCharArray` into a `uchar` array with `CP_UTF8`.
-- The selected `WebRequest` overload.
-- `CharArrayToString(result, 0, -1, CP_UTF8)`.
-
-Impact:
-
-- Compile compatibility was confirmed by MetaEditor.
-
-### Issue 3: Broker-Specific Symbol Variants Are Not Auto-Resolved
-
-Severity: **Low**
-
-The implementation validates configured symbols, but does not auto-detect broker suffixes or prefixes.
-
-Impact:
-
-- If the broker uses names such as `XAUUSDm`, the user must provide those exact symbols in the `Symbols` input.
-- This matches v0.1 expectations but should be documented for users.
-
-### Issue 4: History Sync Is Not Retried For Initially Invalid Symbols
-
-Severity: **Low**
-
-If a symbol lacks enough history during `OnInit`, it is omitted from `g_states` and is not re-added later if history becomes available.
-
-Impact:
-
-- The EA fails safely, but a user may need to reload the EA after history sync completes.
-- This is acceptable for v0.1 but should be noted.
-
-## Required Fixes
-
-Before approval for live terminal use:
-
-- Run manual MT5 terminal testing with valid Telegram settings.
-
-Recommended but not blocking for v0.1:
-
-- Document that broker-specific symbol names must be entered exactly.
-- Document that users may need to reload the EA after symbol history becomes available.
-- Consider adding an input for timer interval in a later version.
+- Errors: `0`
+- Warnings: `0`
+- Generated EX5 size: `47964` bytes
 
 ## Approval Decision
 
 Decision: **Approved For Manual MT5 Testing**
 
-The implementation matches the approved spec in the critical areas:
-
-- Alert-only safety.
-- Closed-candle EMA34/EMA89 crossover behavior.
-- Startup historical alert prevention.
-- Duplicate prevention.
-- Telegram failure retry safety.
-- MT5 symbol, history, handle, and buffer checks.
-
-The required channel-disabled fix and forced Telegram failure logging update have been applied. v0.2 compiled successfully with Exness MT5 20.3 MetaEditor.
-
-Final live-terminal approval should wait until the manual MT5 test plan is executed.
-
-No trading-safety blocker was found.
+The v0.4 implementation matches the alert-only TNPA Radar Scanner requirements and compiled successfully with Exness MT5 20.3 MetaEditor.
