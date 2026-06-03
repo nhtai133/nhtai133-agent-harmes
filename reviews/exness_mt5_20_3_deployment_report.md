@@ -16,7 +16,7 @@ C:\Users\ADMIN\AppData\Roaming\MetaQuotes\Terminal\C6DD07FBE3E7CA400B4ED0590FF84
 
 Status: **Success**
 
-The compiled EX5 file was copied to the confirmed Exness MT5 20.3 `MQL5\Experts` folder.
+The updated v0.2 compiled EX5 file replaced the existing file in the confirmed Exness MT5 20.3 `MQL5\Experts` folder.
 
 ## Destination File Existence
 
@@ -31,13 +31,16 @@ Exists=True
 ## Destination File Size
 
 ```text
-27842 bytes
+33430 bytes
 ```
 
 Verification result:
 
 ```text
 GreaterThanZero=True
+SourceSize=33430
+DestinationSize=33430
+SizeMatches=True
 ```
 
 ## Deployment Target Confirmation
@@ -90,6 +93,7 @@ https://api.telegram.org
    - `EnableTelegramAlert`
    - `EnablePopupAlert`
    - `EnablePrintLog`
+   - `SendStartupTestMessage=true`
 9. Run the manual test plan:
 
 ```text
@@ -97,3 +101,23 @@ tests\tnpa_telegram_alert_ea_manual_test_plan.md
 ```
 
 10. Confirm no orders are placed and no positions are modified during testing.
+11. Confirm the startup Telegram test message is received after EA initialization:
+
+```text
+TNPA Telegram Alert EA Connected
+
+Version: v0.2
+Broker: <broker>
+Account: <account number>
+Mode: Demo or Live
+Symbols: <configured symbols>
+Timeframe: <configured timeframe>
+
+Connection Test: SUCCESS
+```
+
+## Startup Telegram Test Readiness
+
+Status: **Ready**
+
+The deployed Exness MT5 20.3 EX5 matches the newly compiled v0.2 source EX5 by file size. It is ready for manual startup Telegram connection testing after `https://api.telegram.org` is allowed in MT5 WebRequest settings and valid Telegram inputs are configured.

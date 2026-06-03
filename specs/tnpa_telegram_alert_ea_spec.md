@@ -8,7 +8,7 @@ The EA is intended for TNPA Trading OS as a notification tool only. It must supp
 
 ## 2. Scope
 
-Version v0.1 covers:
+Version v0.2 covers:
 
 - Alert-only Expert Advisor for MetaTrader 5.
 - Symbols:
@@ -74,6 +74,9 @@ User-configurable inputs:
 - `EnableTNPAFilters`
   - Default: disabled.
   - Reserved for later extension.
+- `SendStartupTestMessage`
+  - Default: enabled.
+  - Sends one Telegram connection test message after successful EA initialization when Telegram alerts are enabled and Telegram credentials are configured.
 
 Required runtime assumptions:
 
@@ -85,7 +88,7 @@ Required runtime assumptions:
 
 ## 5. Signal Logic v0.1
 
-Signal foundation:
+Signal foundation v0.1:
 
 - Calculate EMA 34 and EMA 89 for each configured symbol and timeframe.
 - Evaluate signals only after a candle has closed.
@@ -120,10 +123,12 @@ Startup and restart behavior:
 - Initialize monitoring state from the latest available closed candle.
 - Start evaluating alerts from the next newly closed candle after initialization.
 - If the EA restarts, it should not backfill historical alerts from candles that closed before restart.
+- If `SendStartupTestMessage` is enabled, send one startup Telegram connection test message after successful initialization when Telegram is enabled and both Telegram inputs are configured.
+- Startup test messages must not affect signal evaluation, duplicate prevention, or pending failed alert state.
 
 TNPA filter extension points:
 
-- v0.1 should reserve structure for future TNPA filters.
+- v0.2 should reserve structure for future TNPA filters.
 - Future filters may include session logic, market structure, volatility, confirmation rules, or higher-timeframe alignment.
 - In v0.1, TNPA filters must not block or modify alerts unless explicitly implemented in a later approved specification.
 
@@ -159,6 +164,32 @@ The message must not include:
 - Position size.
 - Profit guarantees.
 - Direct financial advice.
+
+Startup connection test message:
+
+```text
+TNPA Telegram Alert EA Connected
+
+Version: v0.2
+Broker: <broker>
+Account: <account number>
+Mode: Demo or Live
+Symbols: <configured symbols>
+Timeframe: <configured timeframe>
+
+Connection Test: SUCCESS
+```
+
+Startup connection test rules:
+
+- Send only once per EA initialization.
+- Send only if `SendStartupTestMessage=true`.
+- Send only if `EnableTelegramAlert=true`.
+- Send only if `TelegramBotToken` is configured.
+- Send only if `TelegramChatID` is configured.
+- If send fails, log the exact Telegram/WebRequest failure reason, even when routine print logging is disabled.
+- Do not mark any signal alert as successfully delivered because of the startup test.
+- Do not create or modify pending failed signal alert state because of the startup test.
 
 ## 7. Duplicate Alert Rules
 
@@ -223,10 +254,15 @@ Human approval is required before:
 Configuration tests:
 
 - EA accepts Telegram bot token and chat ID as user inputs.
+- EA accepts `SendStartupTestMessage` as a user input.
 - EA handles missing Telegram token safely.
 - EA handles missing Telegram chat ID safely.
 - EA reports missing MT5 WebRequest permission for Telegram safely.
 - EA does not print full Telegram token in logs.
+- EA sends one startup test message after successful initialization when Telegram is enabled and credentials are configured.
+- EA does not send startup test message when `SendStartupTestMessage=false`.
+- EA does not send startup test message when Telegram is disabled.
+- EA logs the exact reason when startup test message fails, even when routine print logging is disabled.
 - EA handles unavailable symbols gracefully.
 - EA validates enough history exists for EMA 34/89 calculation.
 - EA handles invalid indicator handles safely.
@@ -284,6 +320,7 @@ Implementation may begin only after the human operator approves:
 - Primary timeframe: `H1`.
 - EMA settings: `34` and `89`.
 - Telegram input approach.
+- Startup connection test message behavior.
 - EMA 34/89 crossover-only signal trigger.
 - Startup behavior that does not send historical alerts.
 - Telegram failure and one-retry behavior.
@@ -296,7 +333,7 @@ Implementation may begin only after the human operator approves:
 
 Before implementation starts, Commander must confirm:
 
-- The task is scoped to v0.1.
+- The task is scoped to v0.2.
 - Coder is authorized to create MQ5 code.
 - Tester has the validation checklist.
 - Reviewer has the acceptance criteria.

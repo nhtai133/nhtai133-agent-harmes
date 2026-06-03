@@ -16,7 +16,15 @@ Review role:
 - Tester
 - Reviewer
 
-No MQ5 code was written or modified during this review.
+This review file was updated after the v0.2 startup test implementation and forced Telegram failure logging fix.
+
+Update status:
+
+- v0.2 startup Telegram connection test added.
+- `SendStartupTestMessage` input added.
+- Startup test uses account metadata for the required connection message only.
+- Startup test does not affect signal logic, duplicate prevention, or pending failed alert state.
+- Telegram send failures now use forced warning logs so exact failure reasons are printed even when routine print logging is disabled.
 
 ## Pass Items
 
@@ -34,10 +42,14 @@ Static scan found no references to common trade/order APIs such as:
 - `PositionGet`
 - `Buy`
 - `Sell`
-- `AccountInfo`
 - `HistoryDeal`
 
 The implementation is alert-only and does not place, modify, or close trades.
+
+Note:
+
+- `AccountInfoString` and `AccountInfoInteger` are used only to populate the v0.2 startup connection-test message with broker, account number, and account mode.
+- They are not order placement or position modification functions.
 
 ### 2. Closed Candle EMA34/EMA89 Crossover Logic
 
@@ -132,6 +144,27 @@ When `EnableTelegramAlert` is false:
 
 This is acceptable for non-Telegram alert mode.
 
+### 9. Startup Telegram Connection Test
+
+Status: **Pass**
+
+The v0.2 implementation adds:
+
+- `input bool SendStartupTestMessage = true`.
+- One startup connection test after successful `OnInit`.
+- Telegram-only send when Telegram is enabled and both Telegram inputs are configured.
+- Skip logs when startup test is disabled, Telegram is disabled, token is missing, or chat ID is missing.
+- Failure log that points to the preceding exact Telegram/WebRequest failure reason.
+- Telegram/WebRequest failure reasons are forced warnings, so they remain visible even when `EnablePrintLog=false`.
+
+The startup test:
+
+- Does not call `DeliverAlert`.
+- Does not update `lastSuccessfulAlertBarTime`.
+- Does not create pending failed signal alert state.
+- Does not evaluate EMA signals.
+- Does not call trading/order functions.
+
 ## Issues Found
 
 ### Issue 1: All Alert Channels Can Be Disabled
@@ -157,9 +190,27 @@ Impact:
 
 Severity: **Medium**
 
-The code is likely to compile in MT5 based on static review, but it has not been compiled in MetaEditor.
+Status: **Fixed**
 
-Areas that should be confirmed by actual compilation:
+The updated v0.2 source was compiled with Exness MT5 20.3 MetaEditor:
+
+```text
+C:\Program Files\MetaTrader 5 EXNESS 20.3\MetaEditor64.exe
+```
+
+Final compile result:
+
+```text
+0 errors, 0 warnings
+```
+
+Latest verified compile line:
+
+```text
+2026.06.03 18:24:06.017 Compile C:\Users\ADMIN\nhtai133-agent-harmes\src\TNPA_Telegram_Alert_EA.mq5 - 0 errors, 0 warnings, 491 ms elapsed, cpu='X64 Regular'
+```
+
+Areas confirmed by actual compilation:
 
 - `CharToString(c)` with `uchar` input.
 - `StringToCharArray` into a `uchar` array with `CP_UTF8`.
@@ -168,7 +219,7 @@ Areas that should be confirmed by actual compilation:
 
 Impact:
 
-- Static review cannot fully guarantee MT5 compiler compatibility.
+- Compile compatibility was confirmed by MetaEditor.
 
 ### Issue 3: Broker-Specific Symbol Variants Are Not Auto-Resolved
 
@@ -196,7 +247,7 @@ Impact:
 
 Before approval for live terminal use:
 
-- Compile in MetaEditor and resolve any compiler errors or warnings.
+- Run manual MT5 terminal testing with valid Telegram settings.
 
 Recommended but not blocking for v0.1:
 
@@ -206,7 +257,7 @@ Recommended but not blocking for v0.1:
 
 ## Approval Decision
 
-Decision: **Approved For MetaEditor Compile Validation**
+Decision: **Approved For Manual MT5 Testing**
 
 The implementation matches the approved spec in the critical areas:
 
@@ -217,9 +268,8 @@ The implementation matches the approved spec in the critical areas:
 - Telegram failure retry safety.
 - MT5 symbol, history, handle, and buffer checks.
 
-The required channel-disabled fix has been applied. Final live-terminal approval should still wait until:
+The required channel-disabled fix and forced Telegram failure logging update have been applied. v0.2 compiled successfully with Exness MT5 20.3 MetaEditor.
 
-1. The file is compiled in MetaEditor.
-2. Any compiler errors or warnings are resolved.
+Final live-terminal approval should wait until the manual MT5 test plan is executed.
 
 No trading-safety blocker was found.

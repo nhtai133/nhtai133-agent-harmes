@@ -5,7 +5,7 @@
 //| Safety boundary: this EA does not place, modify, or close trades. |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.00"
+#property version   "1.02"
 #property description "TNPA alert-only EA. Sends Telegram and/or popup alerts on EMA 34/89 closed-candle crossovers."
 
 input string          Symbols             = "XAUUSD,EURUSD,BTCUSD";
@@ -17,10 +17,12 @@ input string          TelegramChatID      = "";
 input bool            EnableTelegramAlert = true;
 input bool            EnablePopupAlert    = true;
 input bool            EnablePrintLog      = true;
+input bool            SendStartupTestMessage = true;
 
 const int TIMER_SECONDS = 30;
 const int TELEGRAM_TIMEOUT_MS = 5000;
 const string EA_NAME = "TNPA Telegram Alert EA";
+const string EA_VERSION = "v0.2";
 
 struct PendingAlert
 {
@@ -118,6 +120,23 @@ string TimeframeToText(const ENUM_TIMEFRAMES timeframe)
       case PERIOD_MN1: return "MN1";
       default:         return EnumToString(timeframe);
    }
+}
+
+//+------------------------------------------------------------------+
+//| Human-readable account mode for startup connection test.          |
+//+------------------------------------------------------------------+
+string AccountModeToText()
+{
+   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+
+   if(mode == ACCOUNT_TRADE_MODE_DEMO)
+      return "Demo";
+   if(mode == ACCOUNT_TRADE_MODE_REAL)
+      return "Live";
+   if(mode == ACCOUNT_TRADE_MODE_CONTEST)
+      return "Contest";
+
+   return "Unknown";
 }
 
 //+------------------------------------------------------------------+
@@ -293,6 +312,21 @@ string BuildAlertMessage(const string symbol,
 }
 
 //+------------------------------------------------------------------+
+//| Build startup Telegram connection-test message.                   |
+//+------------------------------------------------------------------+
+string BuildStartupTestMessage()
+{
+   return StringFormat("%s Connected\n\nVersion: %s\nBroker: %s\nAccount: %I64d\nMode: %s\nSymbols: %s\nTimeframe: %s\n\nConnection Test: SUCCESS",
+                       EA_NAME,
+                       EA_VERSION,
+                       AccountInfoString(ACCOUNT_COMPANY),
+                       AccountInfoInteger(ACCOUNT_LOGIN),
+                       AccountModeToText(),
+                       Symbols,
+                       TimeframeToText(SignalTimeframe));
+}
+
+//+------------------------------------------------------------------+
 //| Send Telegram message. Success requires HTTP 200 and ok:true.     |
 //+------------------------------------------------------------------+
 bool SendTelegramMessage(const string message)
@@ -302,7 +336,7 @@ bool SendTelegramMessage(const string message)
 
    if(TelegramBotToken == "" || TelegramChatID == "")
    {
-      LogMessage("Telegram send failed: TelegramBotToken or TelegramChatID is empty.");
+      WarnMessage("Telegram send failed: TelegramBotToken or TelegramChatID is empty.");
       return false;
    }
 
@@ -321,7 +355,7 @@ bool SendTelegramMessage(const string message)
 
    if(status == -1)
    {
-      LogMessage(StringFormat("Telegram send failed: WebRequest error %d. Confirm Telegram URL is allowed in MT5 options.", error));
+      WarnMessage(StringFormat("Telegram send failed: WebRequest error %d. Confirm Telegram URL is allowed in MT5 options.", error));
       return false;
    }
 
@@ -329,8 +363,44 @@ bool SendTelegramMessage(const string message)
    if(status == 200 && StringFind(response, "\"ok\":true") >= 0)
       return true;
 
-   LogMessage(StringFormat("Telegram send failed: HTTP %d Response: %s", status, response));
+   WarnMessage(StringFormat("Telegram send failed: HTTP %d Response: %s", status, response));
    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Send one startup Telegram connection test on successful init.     |
+//+------------------------------------------------------------------+
+void SendStartupConnectionTest()
+{
+   if(!SendStartupTestMessage)
+   {
+      LogMessage("Startup Telegram connection test skipped: SendStartupTestMessage is disabled.");
+      return;
+   }
+
+   if(!EnableTelegramAlert)
+   {
+      LogMessage("Startup Telegram connection test skipped: Telegram alerts are disabled.");
+      return;
+   }
+
+   if(TelegramBotToken == "")
+   {
+      LogMessage("Startup Telegram connection test skipped: TelegramBotToken is empty.");
+      return;
+   }
+
+   if(TelegramChatID == "")
+   {
+      LogMessage("Startup Telegram connection test skipped: TelegramChatID is empty.");
+      return;
+   }
+
+   string message = BuildStartupTestMessage();
+   if(SendTelegramMessage(message))
+      LogMessage("Startup Telegram connection test sent successfully.");
+   else
+      WarnMessage("Startup Telegram connection test failed. See preceding Telegram failure log for exact reason.");
 }
 
 //+------------------------------------------------------------------+
@@ -545,6 +615,7 @@ int OnInit()
 
    InitializeSymbols();
    EventSetTimer(TIMER_SECONDS);
+   SendStartupConnectionTest();
 
    return INIT_SUCCEEDED;
 }
